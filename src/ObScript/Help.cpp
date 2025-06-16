@@ -7,18 +7,6 @@ namespace RE
 		const auto formEnumString = FORM_ENUM_STRING::GetFormEnumString();
 		return formEnumString[std::to_underlying(a_type)].formCode;
 	}
-
-	auto GetConsoleFunctions()
-	{
-		static REL::Relocation<SCRIPT_FUNCTION(*)[436]> functions{ Offset::SCRIPT_FUNCTION::FirstConsoleCommand };
-		return std::span{ *functions };
-	}
-
-	auto GetScriptFunctions()
-	{
-		static REL::Relocation<SCRIPT_FUNCTION(*)[736]> functions{ Offset::SCRIPT_FUNCTION::FirstScriptCommand };
-		return std::span{ *functions };
-	}
 }
 
 namespace ObScript::Help
@@ -49,56 +37,17 @@ namespace ObScript::Help
 			return it != a_str.end();
 		}
 
-		const char* GetFormEditorID(const RE::TESForm* a_form)
+		const char* GetFormEditorID(RE::TESForm* a_form)
 		{
-			switch (a_form->GetFormType())
-			{
-			case RE::FormType::Keyword:
-			case RE::FormType::LocationRefType:
-			case RE::FormType::Action:
-			case RE::FormType::MenuIcon:
-			case RE::FormType::Global:
-			case RE::FormType::HeadPart:
-			case RE::FormType::Race:
-			case RE::FormType::Sound:
-			case RE::FormType::Script:
-			case RE::FormType::Navigation:
-			case RE::FormType::Cell:
-			case RE::FormType::WorldSpace:
-			case RE::FormType::Land:
-			case RE::FormType::NavMesh:
-			case RE::FormType::Dialogue:
-			case RE::FormType::Quest:
-			case RE::FormType::Idle:
-			case RE::FormType::AnimatedObject:
-			case RE::FormType::ImageAdapter:
-			case RE::FormType::VoiceType:
-			case RE::FormType::Ragdoll:
-			case RE::FormType::DefaultObject:
-			case RE::FormType::MusicType:
-			case RE::FormType::StoryManagerBranchNode:
-			case RE::FormType::StoryManagerQuestNode:
-			case RE::FormType::StoryManagerEventNode:
-			case RE::FormType::SoundRecord:
-				break;
-
-			default:
-				auto hndl = REX::W32::GetModuleHandleA("po3_Tweaks");
-				auto func = reinterpret_cast<const char* (*)(std::uint32_t)>(REX::W32::GetProcAddress(hndl, "GetFormEditorID"));
-				if (func)
-				{
-					return func(a_form->formID);
-				}
-			}
-
+			// TODO: Get non-typical EditorIDs
 			return a_form->GetFormEditorID();
 		}
 
 		void Print(std::string_view a_msg)
 		{
-			if (auto consoleLog = RE::ConsoleLog::GetSingleton())
+			if (auto menuConsole = RE::MenuConsole::Instance(false))
 			{
-				consoleLog->Print(a_msg.data());
+				menuConsole->PrintLine(a_msg.data());
 			}
 		}
 	}
@@ -132,7 +81,7 @@ namespace ObScript::Help
 				return;
 			case RE::FormType::Cell:
 				if (auto cell = a_form->As<RE::TESObjectCELL>();
-					cell && cell->IsExteriorCell())
+					cell && (cell->cellFlags & 1) == 0)
 				{
 					return;
 				}
@@ -142,7 +91,7 @@ namespace ObScript::Help
 			}
 
 			std::string_view edid = IMPL::GetFormEditorID(a_form);
-			std::string_view name = a_form->GetName();
+			std::string_view name = RE::TESFullName::GetFullName(a_form);
 
 			if (IMPL::Contains(edid, a_name) || IMPL::Contains(name, a_name))
 			{
@@ -173,30 +122,14 @@ namespace ObScript::Help
 		{
 			void Print(const std::string_view& a_name, const RE::FormType& a_type = RE::FormType::None)
 			{
-				auto [map, lock] = RE::TESForm::GetAllForms();
-				for (auto& [formID, iter] : *map)
+				auto map = RE::TESForm::GetAllForms();
+				for (auto& iter: *map)
 				{
 					if (a_type != RE::FormType::None)
-						if (a_type != iter->GetFormType())
+						if (a_type != iter.second->GetFormType())
 							continue;
 
-					FORM::Match(a_name, iter);
-				}
-
-				FORM::Print();
-			}
-		}
-
-		namespace TYPE
-		{
-			void Print(const std::string_view& a_name, const RE::FormType& a_type)
-			{
-				if (auto dataHandler = RE::TESDataHandler::GetSingleton())
-				{
-					for (auto iter : dataHandler->formArrays[std::to_underlying(a_type)])
-					{
-						FORM::Match(a_name, iter);
-					}
+					FORM::Match(a_name, iter.second);
 				}
 
 				FORM::Print();
@@ -233,7 +166,6 @@ namespace ObScript::Help
 					{
 						std::uint32_t cidx{ 0 };
 						cidx += a_file->compileIndex << 24;
-						cidx += a_file->smallFileCompileIndex << 12;
 
 						std::uint16_t data{ 0 };
 						bool          dataFound{ false };
@@ -243,13 +175,13 @@ namespace ObScript::Help
 						do
 						{
 							const auto size = a_file->actualChunkSize;
-							switch (a_file->GetCurrentSubRecordType())
+							switch (a_file->GetTESChunk())
 							{
-							case 'ATAD':
-								dataFound = a_file->ReadData(&data, size);
+							case RE::CHUNK_ID::kDATA:
+								dataFound = a_file->GetChunkData(&data, size);
 								break;
-							case 'DIDE':
-								edidFound = a_file->ReadData(edid, size);
+							case RE::CHUNK_ID::kEDID:
+								edidFound = a_file->GetChunkData(edid, size);
 								break;
 							default:
 								break;
@@ -268,11 +200,11 @@ namespace ObScript::Help
 								break;
 							}
 						}
-						while (a_file->SeekNextSubrecord());
+						while (a_file->NextChunk());
 					}
 				}
-				while (a_file->SeekNextForm(true));
-				a_file->CloseTES(false);
+				while (a_file->NextForm(true));
+				a_file->CloseTES();
 			}
 
 			void Print(const std::string_view& a_name)
@@ -300,12 +232,7 @@ namespace ObScript::Help
 
 				if (auto dataHandler = RE::TESDataHandler::GetSingleton())
 				{
-					for (auto iter : dataHandler->compiledFileCollection.files)
-					{
-						Match(iter);
-					}
-
-					for (auto iter : dataHandler->compiledFileCollection.smallFiles)
+					for (auto iter : dataHandler->listFiles)
 					{
 						Match(iter);
 					}
@@ -332,7 +259,7 @@ namespace ObScript::Help
 				CELL::Print(a_name);
 				return;
 			default:
-				TYPE::Print(a_name, a_type);
+				NONE::Print(a_name, a_type);
 				return;
 			}
 		}
@@ -367,14 +294,18 @@ namespace ObScript::Help
 		void Print(const std::string_view& a_name)
 		{
 			IMPL::Print("----CONSOLE COMMANDS--------------------"sv);
-			for (auto& command : RE::GetConsoleFunctions())
+			for (auto& command : RE::SCRIPT_FUNCTION::GetConsoleFunctions())
 			{
+				if (std::to_underlying(command.output) == 0x0186)
+					continue;
 				Match(a_name, command);
 			}
 
 			IMPL::Print("----SCRIPT FUNCTIONS--------------------"sv);
-			for (auto& command : RE::GetScriptFunctions())
+			for (auto& command : RE::SCRIPT_FUNCTION::GetScriptFunctions())
 			{
+				if (std::to_underlying(command.output) == 0x1172)
+					continue;
 				Match(a_name, command);
 			}
 		}
@@ -397,7 +328,7 @@ namespace ObScript::Help
 			IMPL::Print("----GLOBAL VARIABLES--------------------"sv);
 			if (auto dataHandler = RE::TESDataHandler::GetSingleton())
 			{
-				for (auto iter : dataHandler->GetFormArray<RE::TESGlobal>())
+				for (auto iter : dataHandler->listGlobals)
 				{
 					Match(a_name, iter);
 				}
@@ -453,24 +384,20 @@ namespace ObScript::Help
 		void Print(const std::string_view& a_name)
 		{
 			IMPL::Print("----GAME SETTINGS-----------------------"sv);
-			if (auto gmstSettings = RE::GameSettingCollection::GetSingleton())
+			if (auto settings = RE::GameSettingCollection::GetSingleton())
 			{
-				for (auto& [iter, name, setting] : gmstSettings->settings)
+				for (auto& [iter, name, setting] : settings->settings)
 				{
 					Match(a_name, setting);
 				}
 			}
 
 			IMPL::Print("----INI SETTINGS------------------------"sv);
-			if (auto mainSettings = RE::INISettingCollection::GetSingleton())
+			if (auto settings = RE::INISettingCollection::GetSingleton())
 			{
-				if (auto prefSettings = RE::INIPrefSettingCollection::GetSingleton())
+				for (auto setting : settings->settings)
 				{
-					for (auto mainSetting : mainSettings->settings)
-					{
-						auto prefSetting = prefSettings->GetSetting(mainSetting->name);
-						Match(a_name, prefSetting ? prefSetting : mainSetting);
-					}
+					Match(a_name, setting);
 				}
 			}
 		}

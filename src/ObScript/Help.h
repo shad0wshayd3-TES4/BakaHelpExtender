@@ -33,27 +33,27 @@ namespace ObScript::Help
 	}
 
 	inline bool Execute(
-		const RE::SCRIPT_PARAMETER*      a_paramInfo,
-		RE::SCRIPT_FUNCTION::ScriptData* a_scriptData,
-		RE::TESObjectREFR*               a_thisObj,
-		RE::TESObjectREFR*               a_containingObj,
-		RE::Script*                      a_scriptObj,
-		RE::ScriptLocals*                a_locals,
-		[[maybe_unused]] double&         a_result,
-		std::uint32_t&                   a_opcodeOffsetPtr)
+		const RE::SCRIPT_PARAMETER* a_parameters,
+		const char*                 a_compiledParams,
+		RE::TESObjectREFR*          a_refObject,
+		RE::TESObjectREFR*          a_container,
+		RE::Script*                 a_script,
+		RE::ScriptLocals*           a_scriptLocals,
+		[[maybe_unused]] double&    a_result,
+		std::uint32_t&              a_offset)
 	{
 		char a_name[512]{ '\0' };
 		char a_type[512]{ '\0' };
 
 		std::uint32_t a_code{ 0 };
 		RE::Script::ParseParameters(
-			a_paramInfo,
-			a_scriptData,
-			a_opcodeOffsetPtr,
-			a_thisObj,
-			a_containingObj,
-			a_scriptObj,
-			a_locals,
+			a_parameters,
+			a_compiledParams,
+			a_offset,
+			a_refObject,
+			a_container,
+			a_script,
+			a_scriptLocals,
 			a_name,
 			&a_code,
 			a_type);
